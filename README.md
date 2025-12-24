@@ -103,7 +103,7 @@ Windows                       | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 Mac                           | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 Self hostable                 | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
 Has Stable Release?           | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-S3 support                    | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+S3 support                    | :construction: | ❌ | ✅ | ✅ | ❌ | ❌ |
 webdav support                | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ |
 FTP support                   | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ |
 Dedicated docs site?          | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
