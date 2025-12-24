@@ -60,7 +60,7 @@ func (idx *Index) handleFile(file os.FileInfo, fullCombined string, realFilePath
 	realSize, nlink, ino, canUseSyscall = getFileDetails(sys, realFilePath)
 
 	if !canUseSyscall {
-		logger.Errorf("Failed to get syscall info for file %s on Unix system - file may have been deleted or permission denied. Using file.Size() fallback.", realFilePath)
+		logger.Debugf("Failed to get syscall info for file %s on Unix system - using file.Size() fallback (expected for S3/remote storage).", realFilePath)
 		realSize = uint64(file.Size())
 	}
 

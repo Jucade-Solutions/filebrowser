@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gtsteffaniak/filebrowser/backend/adapters/storage"
 	"github.com/gtsteffaniak/filebrowser/backend/common/errors"
 	"github.com/gtsteffaniak/filebrowser/backend/common/settings"
 	"github.com/gtsteffaniak/filebrowser/backend/common/utils"
@@ -81,6 +82,7 @@ type Index struct {
 	hasLoggedInitialScan bool                `json:"-"` // Whether we've logged the first complete round
 
 	// Control
+	Storage    storage.Storage `json:"-"`
 	mock       bool
 	mu         sync.RWMutex
 	wasIndexed bool
@@ -120,6 +122,25 @@ func Initialize(source *settings.Source, mock bool) {
 		processedInodes:   make(map[uint64]struct{}),
 		FoundHardLinks:    make(map[string]uint64),
 	}
+	if source.Type == "s3" {
+		s3Store, err := storage.NewS3Storage(
+			source.Config.S3.Bucket,
+			source.Config.S3.Region,
+			source.Config.S3.Endpoint,
+			source.Config.S3.AccessKey,
+			source.Config.S3.SecretKey,
+			source.Config.S3.Prefix,
+			source.Path,
+		)
+		if err != nil {
+			logger.Errorf("failed to create s3 storage for source %s: %v", source.Name, err)
+		} else {
+			newIndex.Storage = s3Store
+		}
+	} else {
+		newIndex.Storage = storage.NewLocalStorage(source.Path)
+	}
+
 	newIndex.ReducedIndex = ReducedIndex{
 		Status:     "indexing",
 		IdxName:    source.Name,
@@ -148,7 +169,7 @@ func (idx *Index) indexDirectory(adjustedPath string, config actionConfig) error
 	adjustedPath = utils.AddTrailingSlashIfNotExists(adjustedPath)
 	realPath := strings.TrimRight(idx.Path, "/") + adjustedPath
 	// Open the directory
-	dir, err := os.Open(realPath)
+	dir, err := idx.Storage.Open(realPath)
 	if err != nil {
 		// must have been deleted
 		return err
@@ -222,7 +243,7 @@ func (idx *Index) GetFsDirInfo(adjustedPath string) (*iteminfo.FileInfo, error) 
 	}
 	originalPath := realPath
 
-	dir, err := os.Open(realPath)
+	dir, err := idx.Storage.Open(realPath)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +304,7 @@ func (idx *Index) GetFsDirInfo(adjustedPath string) (*iteminfo.FileInfo, error) 
 
 }
 
-func (idx *Index) GetDirInfo(dirInfo *os.File, stat os.FileInfo, realPath, adjustedPath, combinedPath string, config actionConfig) (*iteminfo.FileInfo, error) {
+func (idx *Index) GetDirInfo(dirInfo storage.File, stat os.FileInfo, realPath, adjustedPath, combinedPath string, config actionConfig) (*iteminfo.FileInfo, error) {
 	combinedPath = utils.AddTrailingSlashIfNotExists(combinedPath)
 	files, err := dirInfo.Readdir(-1)
 	if err != nil {
@@ -405,7 +426,7 @@ func (idx *Index) GetDirInfo(dirInfo *os.File, stat os.FileInfo, realPath, adjus
 		Folders: dirInfos,
 	}
 	dirFileInfo.ItemInfo = iteminfo.ItemInfo{
-		Name:       filepath.Base(dirInfo.Name()),
+		Name:       filepath.Base(stat.Name()),
 		Type:       "directory",
 		Size:       totalSize,
 		ModTime:    stat.ModTime(),
@@ -441,7 +462,19 @@ func (idx *Index) GetRealPath(relativePath ...string) (string, bool, error) {
 	if err != nil {
 		return absolutePath, false, fmt.Errorf("could not get real path: %v, %s", joinedPath, err)
 	}
-	realPath, isDir, err := iteminfo.ResolveSymlinks(absolutePath)
+	// For LocalStorage, we can still use ResolveSymlinks if we want, but for S3 it doesn't make sense.
+	// For now, let's just use the joined path if it exists.
+	exists := idx.Storage.Exists(absolutePath)
+	if !exists {
+		return absolutePath, false, os.ErrNotExist
+	}
+	info, err := idx.Storage.Stat(absolutePath)
+	if err != nil {
+		return absolutePath, false, err
+	}
+	var realPath string
+	realPath = absolutePath
+	isDir = info.IsDir()
 	if err == nil {
 		RealPathCache.Set(joinedPath, realPath)
 		IsDirCache.Set(joinedPath+":isdir", isDir)
@@ -479,11 +512,15 @@ func (idx *Index) RefreshFileInfo(opts utils.FileOptions) error {
 }
 
 func isHidden(file os.FileInfo, srcPath string) bool {
-	if file.Name()[0] == '.' {
+	name := file.Name()
+	if len(name) == 0 {
+		return false
+	}
+	if name[0] == '.' {
 		return true
 	}
 	if runtime.GOOS == "windows" {
-		return CheckWindowsHidden(filepath.Join(srcPath, file.Name()))
+		return CheckWindowsHidden(filepath.Join(srcPath, name))
 	}
 	// Default behavior for non-Windows systems
 	return false

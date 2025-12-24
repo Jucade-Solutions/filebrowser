@@ -153,7 +153,7 @@ func addFile(path string, d *requestContext, tarWriter *tar.Writer, zipWriter *z
 		return err
 	}
 	realPath, _, _ := idx.GetRealPath(path)
-	info, err := os.Stat(realPath)
+	info, err := idx.Storage.Stat(realPath)
 	if err != nil {
 		return err
 	}
@@ -163,6 +163,13 @@ func addFile(path string, d *requestContext, tarWriter *tar.Writer, zipWriter *z
 
 	if info.IsDir() {
 		// Walk through directory contents
+		// Note: Walk currently only works for local FS as it uses filepath.Walk.
+		// For S3, we would need a storage-aware Walk. 
+		// For now, let's keep it local or implement a simple storage walk if needed.
+		// But Wait, if it's S3, realPath is an S3 key. filepath.Walk won't work.
+		if idx.Type == "s3" {
+			return addS3Directory(source, path, baseName, tarWriter, zipWriter, flatten, d)
+		}
 		return filepath.Walk(realPath, func(filePath string, fileInfo os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -218,16 +225,42 @@ func addFile(path string, d *requestContext, tarWriter *tar.Writer, zipWriter *z
 				}
 				return nil
 			}
-			return addSingleFile(filePath, relPath, zipWriter, tarWriter)
+			return addSingleFile(idx, filePath, relPath, zipWriter, tarWriter)
 		})
 	} else {
 		// For a single file, use the base name as the archive path
-		return addSingleFile(realPath, baseName, zipWriter, tarWriter)
+		return addSingleFile(idx, realPath, baseName, zipWriter, tarWriter)
 	}
 }
 
-func addSingleFile(realPath, archivePath string, zipWriter *zip.Writer, tarWriter *tar.Writer) error {
-	file, err := os.Open(realPath)
+func addS3Directory(source, path, baseName string, tarWriter *tar.Writer, zipWriter *zip.Writer, flatten bool, d *requestContext) error {
+	idx := indexing.GetIndex(source)
+	files_list, err := idx.Storage.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	for _, f := range files_list {
+		relPath := f.Name()
+		if !flatten {
+			relPath = filepath.Join(baseName, relPath)
+		}
+		if f.IsDir() {
+			err = addS3Directory(source, filepath.Join(path, f.Name()), relPath, tarWriter, zipWriter, flatten, d)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		err = addSingleFile(idx, filepath.Join(path, f.Name()), relPath, zipWriter, tarWriter)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func addSingleFile(idx *indexing.Index, realPath, archivePath string, zipWriter *zip.Writer, tarWriter *tar.Writer) error {
+	file, err := idx.Storage.Open(realPath)
 	if err != nil {
 		// If we get "is a directory" error, this is likely a symlink to a directory
 		// that wasn't properly detected. Skip it gracefully.
@@ -373,7 +406,7 @@ func rawFilesHandler(w http.ResponseWriter, r *http.Request, d *requestContext, 
 			}
 		}
 
-		fd, err2 := os.Open(realPath)
+		fd, err2 := idx.Storage.Open(realPath)
 		if err2 != nil {
 			// Send OnlyOffice error log if this was an OnlyOffice download
 			if isOnlyOffice && logContext != nil {

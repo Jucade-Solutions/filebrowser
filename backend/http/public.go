@@ -383,7 +383,7 @@ func publicPatchHandler(w http.ResponseWriter, r *http.Request, d *requestContex
 	dstFullPath = parentRealDest + "/" + filepath.Base(dst)
 	rename := r.URL.Query().Get("rename") == "true"
 	if rename {
-		dstFullPath = addVersionSuffix(dstFullPath)
+		dstFullPath = addVersionSuffix(idx, dstFullPath)
 	}
 	// Validate move/rename operation to prevent circular references
 	if action == "rename" || action == "move" {

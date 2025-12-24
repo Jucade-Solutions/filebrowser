@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gtsteffaniak/filebrowser/backend/adapters/storage"
 	"github.com/gtsteffaniak/filebrowser/backend/common/settings"
 	"github.com/gtsteffaniak/filebrowser/backend/indexing"
 	"github.com/gtsteffaniak/filebrowser/backend/indexing/iteminfo"
@@ -70,6 +71,7 @@ func Test_GetRealPath(t *testing.T) {
 		Source: settings.Source{
 			Path: trimPrefix,
 		},
+		Storage: storage.NewLocalStorage(trimPrefix),
 	}
 
 	for _, tt := range tests {

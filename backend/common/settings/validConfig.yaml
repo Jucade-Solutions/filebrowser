@@ -10,6 +10,16 @@ server:
   database: "mydb.db"
   sources:
     - path: "."
+      name: "local"
+      type: "local"
+      config:
+        s3:
+          bucket: ""
+          region: ""
+          endpoint: ""
+          accessKey: ""
+          secretKey: ""
+          prefix: ""
 integrations:
   office:
     url: "http://localhost:9052"

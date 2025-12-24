@@ -15,11 +15,11 @@ const (
 )
 
 type Settings struct {
-	Server       Server       `json:"server"`
-	Auth         Auth         `json:"auth"`
-	Frontend     Frontend     `json:"frontend"`
-	UserDefaults UserDefaults `json:"userDefaults"`
-	Integrations Integrations `json:"integrations"`
+	Server       Server       `json:"server" yaml:"server"`
+	Auth         Auth         `json:"auth" yaml:"auth"`
+	Frontend     Frontend     `json:"frontend" yaml:"frontend"`
+	UserDefaults UserDefaults `json:"userDefaults" yaml:"userDefaults"`
+	Integrations Integrations `json:"integrations" yaml:"integrations"`
 }
 
 type Environment struct {
@@ -48,18 +48,18 @@ type Server struct {
 	DisablePreviews              bool        `json:"disablePreviews"`                        // disable all previews thumbnails, simple icons will be used
 	DisableResize                bool        `json:"disablePreviewResize"`                   // disable resizing of previews for faster loading over slow connections
 	DisableTypeDetectionByHeader bool        `json:"disableTypeDetectionByHeader"`           // disable type detection by header, useful if filesystem is slow.
-	Port                         int         `json:"port"`                                   // port to listen on
-	ListenAddress                string      `json:"listen"`                                 // address to listen on (default: 0.0.0.0)
-	BaseURL                      string      `json:"baseURL"`                                // base URL for the server, the subpath that the server is running on.
+	Port                         int         `json:"port" yaml:"port"`                                   // port to listen on
+	ListenAddress                string      `json:"listen" yaml:"listen"`                                 // address to listen on (default: 0.0.0.0)
+	BaseURL                      string      `json:"baseURL" yaml:"baseURL"`                                // base URL for the server, the subpath that the server is running on.
 	Logging                      []LogConfig `json:"logging" yaml:"logging"`
-	Database                     string      `json:"database"` // path to the database file
-	Sources                      []*Source   `json:"sources" validate:"required,dive"`
-	ExternalUrl                  string      `json:"externalUrl"`     // used by share links if set (eg. http://mydomain.com)
-	InternalUrl                  string      `json:"internalUrl"`     // used by integrations if set, this is the base domain that an integration service will use to communicate with filebrowser (eg. http://localhost:8080)
-	CacheDir                     string      `json:"cacheDir"`        // path to the cache directory, used for thumbnails and other cached files
-	CacheDirCleanup              *bool       `json:"cacheDirCleanup"` // whether to automatically cleanup the cache directory. Note: docker must also mount a persistent volume to persist the cache (default: true)
-	MaxArchiveSizeGB             int64       `json:"maxArchiveSize"`  // max pre-archive combined size of files/folder that are allowed to be archived (in GB)
-	Filesystem                   Filesystem  `json:"filesystem"`      // filesystem settings
+	Database                     string      `json:"database" yaml:"database"` // path to the database file
+	Sources                      []*Source   `json:"sources" yaml:"sources" validate:"required,dive"`
+	ExternalUrl                  string      `json:"externalUrl" yaml:"externalUrl"`     // used by share links if set (eg. http://mydomain.com)
+	InternalUrl                  string      `json:"internalUrl" yaml:"internalUrl"`     // used by integrations if set, this is the base domain that an integration service will use to communicate with filebrowser (eg. http://localhost:8080)
+	CacheDir                     string      `json:"cacheDir" yaml:"cacheDir"`        // path to the cache directory, used for thumbnails and other cached files
+	CacheDirCleanup              *bool       `json:"cacheDirCleanup" yaml:"cacheDirCleanup"` // whether to automatically cleanup the cache directory. Note: docker must also mount a persistent volume to persist the cache (default: true)
+	MaxArchiveSizeGB             int64       `json:"maxArchiveSize" yaml:"maxArchiveSize"`  // max pre-archive combined size of files/folder that are allowed to be archived (in GB)
+	Filesystem                   Filesystem  `json:"filesystem" yaml:"filesystem"`      // filesystem settings
 	// not exposed to config
 	SourceMap    map[string]*Source `json:"-" validate:"omitempty"` // uses realpath as key
 	NameToSource map[string]*Source `json:"-" validate:"omitempty"` // uses name as key
@@ -172,9 +172,10 @@ type LogConfig struct {
 }
 
 type Source struct {
+	Type   string       `json:"type" yaml:"type"`         // storage type: local, s3 (default: local)
 	Path   string       `json:"path" validate:"required"` // file system path. (Can be relative)
-	Name   string       `json:"name"`                     // display name
-	Config SourceConfig `json:"config,omitempty"`
+	Name   string       `json:"name" yaml:"name"`                     // display name
+	Config SourceConfig `json:"config,omitempty" yaml:"config,omitempty"`
 }
 
 type SourceConfig struct {
@@ -187,8 +188,18 @@ type SourceConfig struct {
 	DefaultUserScope string            `json:"defaultUserScope"`                  // defaults to root of index "/" should match folders under path
 	DefaultEnabled   bool              `json:"defaultEnabled"`                    // should be added as a default source for new users?
 	CreateUserDir    bool              `json:"createUserDir"`                     // create a user directory for each user under defaultUserScope + username
+	S3               S3Config          `json:"s3,omitempty" yaml:"s3,omitempty"`
 	// hidden but used internally - optimized map lookups for conditional rules
 	ResolvedConditionals *ResolvedConditionalsConfig `json:"-"`
+}
+
+type S3Config struct {
+	Bucket    string `json:"bucket" yaml:"bucket"`
+	Region    string `json:"region" yaml:"region"`
+	Endpoint  string `json:"endpoint" yaml:"endpoint"`
+	AccessKey string `json:"accessKey" yaml:"accessKey"`
+	SecretKey string `json:"secretKey" yaml:"secretKey"`
+	Prefix    string `json:"prefix" yaml:"prefix"`
 }
 
 type ConditionalFilter struct {

@@ -46,6 +46,9 @@ func validateMoveOperation(src, dst string, isSrcDir bool) error {
 	// Check if destination parent directory exists
 	dstParent := filepath.Dir(dst)
 	if dstParent != "." && dstParent != "/" {
+		// Note: validateMoveOperation is used in resourcePatchHandler which has indices.
+		// However, it's also a helper. Let's make it more generic or pass storage.
+		// For now, let's keep it as is if it's strictly for local, but ideally it should use storage.
 		if _, err := os.Stat(dstParent); os.IsNotExist(err) {
 			return fmt.Errorf("destination directory does not exist: '%s'", dstParent)
 		}
@@ -266,7 +269,7 @@ func resourcePostHandler(w http.ResponseWriter, r *http.Request, d *requestConte
 	}
 
 	// Check for file/folder conflicts before creation
-	if stat, statErr := os.Stat(realPath); statErr == nil {
+	if stat, statErr := idx.Storage.Stat(realPath); statErr == nil {
 		// Path exists, check for type conflicts
 		existingIsDir := stat.IsDir()
 		requestingDir := isDir
@@ -308,7 +311,7 @@ func resourcePostHandler(w http.ResponseWriter, r *http.Request, d *requestConte
 		// On the first chunk, check for conflicts or handle override
 		if offset == 0 {
 			// Check for file/folder conflicts for chunked uploads
-			if stat, statErr := os.Stat(realPath); statErr == nil {
+			if stat, statErr := idx.Storage.Stat(realPath); statErr == nil {
 				existingIsDir := stat.IsDir()
 				requestingDir := false // Files are never directories
 
@@ -551,7 +554,7 @@ func resourcePatchHandler(w http.ResponseWriter, r *http.Request, d *requestCont
 	}
 	rename := r.URL.Query().Get("rename") == "true"
 	if rename {
-		realDest = addVersionSuffix(realDest)
+		realDest = addVersionSuffix(idx, realDest)
 	}
 
 	// Validate move/rename operation to prevent circular references
@@ -576,13 +579,13 @@ func resourcePatchHandler(w http.ResponseWriter, r *http.Request, d *requestCont
 	return errToStatus(err), err
 }
 
-func addVersionSuffix(source string) string {
+func addVersionSuffix(idx *indexing.Index, source string) string {
 	counter := 1
 	dir, name := path.Split(source)
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
 	for {
-		if _, err := os.Stat(source); err != nil {
+		if _, err := idx.Storage.Stat(source); err != nil {
 			break
 		}
 		renamed := fmt.Sprintf("%s(%d)%s", base, counter, ext)

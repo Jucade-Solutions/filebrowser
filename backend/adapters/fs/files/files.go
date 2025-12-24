@@ -111,7 +111,7 @@ func FileInfoFaster(opts utils.FileOptions, access *access.Storage) (*iteminfo.E
 					wg.Go(func() {
 						// Extract metadata for audio files (without album art for performance)
 						if isAudio {
-							err := extractAudioMetadata(context.Background(), item, itemPath, opts.AlbumArt || opts.Content, opts.Metadata, sharedFFmpegService)
+							err := extractAudioMetadata(context.Background(), index, item, itemPath, opts.AlbumArt || opts.Content, opts.Metadata, sharedFFmpegService)
 							if err != nil {
 								logger.Debugf("failed to extract metadata for file: "+item.Name, err)
 							} else {
@@ -198,7 +198,7 @@ func processContent(info *iteminfo.ExtendedFileInfo, idx *indexing.Index, opts u
 		extItem := &iteminfo.ExtendedItemInfo{
 			ItemInfo: info.ItemInfo,
 		}
-		err := extractAudioMetadata(context.Background(), extItem, info.RealPath, opts.AlbumArt || opts.Content, opts.Metadata || opts.Content, nil)
+		err := extractAudioMetadata(context.Background(), idx, extItem, info.RealPath, opts.AlbumArt || opts.Content, opts.Metadata || opts.Content, nil)
 		if err != nil {
 			logger.Debugf("failed to extract audio metadata for file: "+info.RealPath, info.Name, err)
 		} else {
@@ -211,7 +211,7 @@ func processContent(info *iteminfo.ExtendedFileInfo, idx *indexing.Index, opts u
 
 	// Process text content for non-video, non-audio files
 	if info.Size < 20*1024*1024 { // 20 megabytes in bytes
-		content, err := getContent(info.RealPath)
+		content, err := getContent(idx, info.RealPath)
 		if err != nil {
 			logger.Debugf("could not get content for file: "+info.RealPath, info.Name, err)
 			return
@@ -236,8 +236,8 @@ func generateOfficeId(realPath string) string {
 // extractAudioMetadata extracts metadata from an audio file using dhowden/tag
 // and optionally extracts duration using the ffmpeg service with concurrency control
 // If ffmpegService is nil, a new service will be created (for backward compatibility)
-func extractAudioMetadata(ctx context.Context, item *iteminfo.ExtendedItemInfo, realPath string, getArt bool, getDuration bool, ffmpegService *ffmpeg.FFmpegService) error {
-	file, err := os.Open(realPath)
+func extractAudioMetadata(ctx context.Context, idx *indexing.Index, item *iteminfo.ExtendedItemInfo, realPath string, getArt bool, getDuration bool, ffmpegService *ffmpeg.FFmpegService) error {
+	file, err := idx.Storage.Open(realPath)
 	if err != nil {
 		return err
 	}
@@ -342,7 +342,7 @@ func DeleteFiles(source, absPath string, absDirPath string, isDir bool) error {
 		indexPath := index.MakeIndexPath(absPath)
 
 		// Perform the physical deletion
-		err := os.RemoveAll(absPath)
+		err := index.Storage.RemoveAll(absPath)
 		if err != nil {
 			return err
 		}
@@ -371,7 +371,7 @@ func DeleteFiles(source, absPath string, absDirPath string, isDir bool) error {
 	}
 
 	// Indexing disabled, just delete the file
-	return os.RemoveAll(absPath)
+	return index.Storage.RemoveAll(absPath)
 }
 
 func RefreshIndex(source string, path string, isDir bool, recursive bool) error {
@@ -418,7 +418,7 @@ func RefreshIndex(source string, path string, isDir bool, recursive bool) error 
 
 // validateMoveDestination checks if a move/rename operation is valid
 // It prevents moving a directory into itself or its subdirectories
-func validateMoveDestination(src, dst string, isSrcDir bool) error {
+func validateMoveDestination(idx *indexing.Index, src, dst string, isSrcDir bool) error {
 	// Clean and normalize paths
 	src = filepath.Clean(src)
 	dst = filepath.Clean(dst)
@@ -437,8 +437,11 @@ func validateMoveDestination(src, dst string, isSrcDir bool) error {
 	// Check if destination parent directory exists
 	dstParent := filepath.Dir(dst)
 	if dstParent != "." && dstParent != "/" {
-		if _, err := os.Stat(dstParent); os.IsNotExist(err) {
-			return fmt.Errorf("destination directory does not exist: '%s'", dstParent)
+		if _, err := idx.Storage.Stat(dstParent); err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("destination directory does not exist: '%s'", dstParent)
+			}
+			return err
 		}
 	}
 
@@ -451,11 +454,6 @@ func MoveResource(isSrcDir bool, sourceIndex, destIndex, realsrc, realdst string
 		return fmt.Errorf("cannot move a file to itself: %s", realsrc)
 	}
 
-	// Validate the move operation before executing
-	if err := validateMoveDestination(realsrc, realdst, isSrcDir); err != nil {
-		return err
-	}
-
 	// Get indexes for deletion and refresh operations
 	srcIdx := indexing.GetIndex(sourceIndex)
 	if srcIdx == nil {
@@ -464,6 +462,11 @@ func MoveResource(isSrcDir bool, sourceIndex, destIndex, realsrc, realdst string
 	dstIdx := indexing.GetIndex(destIndex)
 	if dstIdx == nil {
 		return fmt.Errorf("could not get destination index: %v", destIndex)
+	}
+
+	// Validate the move operation before executing
+	if err := validateMoveDestination(srcIdx, realsrc, realdst, isSrcDir); err != nil {
+		return err
 	}
 
 	// Prepare paths for index operations
@@ -521,8 +524,14 @@ func CopyResource(isSrcDir bool, sourceIndex, destIndex, realsrc, realdst string
 		return fmt.Errorf("cannot copy a file to itself: %s", realsrc)
 	}
 
+	// Get indexes for deletion and refresh operations
+	srcIdx := indexing.GetIndex(sourceIndex)
+	if srcIdx == nil {
+		return fmt.Errorf("could not get source index: %v", sourceIndex)
+	}
+
 	// Validate the copy operation before executing
-	if err := validateMoveDestination(realsrc, realdst, isSrcDir); err != nil {
+	if err := validateMoveDestination(srcIdx, realsrc, realdst, isSrcDir); err != nil {
 		return err
 	}
 
@@ -567,9 +576,9 @@ func WriteDirectory(opts utils.FileOptions) error {
 	var stat os.FileInfo
 	var err error
 	// Check if the destination exists and is a file
-	if stat, err = os.Stat(realPath); err == nil && !stat.IsDir() {
+	if stat, err = idx.Storage.Stat(realPath); err == nil && !stat.IsDir() {
 		// If it's a file and we're trying to create a directory, remove the file first
-		err = os.Remove(realPath)
+		err = idx.Storage.RemoveAll(realPath)
 		if err != nil {
 			return fmt.Errorf("could not remove existing file to create directory: %v", err)
 		}
@@ -577,7 +586,7 @@ func WriteDirectory(opts utils.FileOptions) error {
 
 	// Ensure the parent directories exist
 	// Permissions are set by MkdirAll (subject to umask, which is usually acceptable)
-	err = os.MkdirAll(realPath, fileutils.PermDir)
+	err = idx.Storage.MkdirAll(realPath, fileutils.PermDir)
 	if err != nil {
 		return err
 	}
@@ -595,16 +604,16 @@ func WriteFile(source, path string, in io.Reader) error {
 	realPath = strings.TrimRight(realPath, "/")
 	// Ensure the parent directories exist
 	parentDir := filepath.Dir(realPath)
-	err := os.MkdirAll(parentDir, fileutils.PermDir)
+	err := idx.Storage.MkdirAll(parentDir, fileutils.PermDir)
 	if err != nil {
 		return err
 	}
 	var stat os.FileInfo
 	// Check if the destination exists and is a directory
-	if stat, err = os.Stat(realPath); err == nil {
+	if stat, err = idx.Storage.Stat(realPath); err == nil {
 		if stat.IsDir() {
 			// If it's a directory and we're trying to create a file, remove the directory first
-			err = os.RemoveAll(realPath)
+			err = idx.Storage.RemoveAll(realPath)
 			if err != nil {
 				return fmt.Errorf("could not remove existing directory to create file: %v", err)
 			}
@@ -615,7 +624,7 @@ func WriteFile(source, path string, in io.Reader) error {
 	// Open the file for writing (create if it doesn't exist, truncate if it does)
 	// For new files: permissions are set to fileutils.PermFile (subject to umask, which is usually acceptable)
 	// For existing files: permissions are preserved automatically (O_TRUNC doesn't change them)
-	file, err := os.OpenFile(realPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, fileutils.PermFile)
+	file, err := idx.Storage.OpenFile(realPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, fileutils.PermFile)
 	if err != nil {
 		return err
 	}
@@ -631,7 +640,7 @@ func WriteFile(source, path string, in io.Reader) error {
 }
 
 // getContent reads and returns the file content if it's considered an editable text file.
-func getContent(realPath string) (string, error) {
+func getContent(idx *indexing.Index, realPath string) (string, error) {
 	const headerSize = 4096
 	// Thresholds for detecting binary-like content (these can be tuned)
 	const maxNullBytesInHeaderAbs = 10    // Max absolute null bytes in header
@@ -640,7 +649,7 @@ func getContent(realPath string) (string, error) {
 	const maxNonPrintableRuneRatio = 0.05 // Max 5% non-printable runes in the entire file
 
 	// Open file
-	f, err := os.Open(realPath)
+	f, err := idx.Storage.Open(realPath)
 	if err != nil {
 		return "", err
 	}
@@ -721,7 +730,12 @@ func getContent(realPath string) (string, error) {
 	// --- End of new heuristic checks for header ---
 
 	// Now read the full file (original logic)
-	content, err := os.ReadFile(realPath)
+	fFull, err := idx.Storage.Open(realPath)
+	if err != nil {
+		return "", err
+	}
+	defer fFull.Close()
+	content, err := io.ReadAll(fFull)
 	if err != nil {
 		return "", err
 	}

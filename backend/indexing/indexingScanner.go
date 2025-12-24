@@ -1,7 +1,6 @@
 package indexing
 
 import (
-	"os"
 	"strings"
 	"time"
 
@@ -289,7 +288,7 @@ func (s *Scanner) getTopLevelDirs() []string {
 	dirs := []string{}
 	realPath := strings.TrimRight(s.idx.Path, "/") + "/"
 
-	dir, err := os.Open(realPath)
+	dir, err := s.idx.Storage.Open(realPath)
 	if err != nil {
 		logger.Errorf("Failed to open root directory: %v", err)
 		return dirs
@@ -387,7 +386,7 @@ func (s *Scanner) directoryExists() bool {
 	realPath := strings.TrimRight(s.idx.Path, "/") + s.scanPath
 	realPath = strings.TrimSuffix(realPath, "/")
 
-	_, err := os.Stat(realPath)
+	_, err := s.idx.Storage.Stat(realPath)
 	return err == nil
 }
 

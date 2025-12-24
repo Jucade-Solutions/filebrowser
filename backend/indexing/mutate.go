@@ -188,29 +188,6 @@ func GetIndexInfo(sourceName string, forceCacheRefresh bool) (ReducedIndex, erro
 		return ReducedIndex{}, fmt.Errorf("index %s not found", sourceName)
 	}
 
-	// Only update disk total if cache is missing or explicitly forced
-	// The "used" value comes from totalSize and is always current
-	sourcePath := idx.Path
-	cacheKey := "usageCache-" + sourceName
-	if forceCacheRefresh {
-		// Invalidate cache to force update
-		utils.DiskUsageCache.Delete(cacheKey)
-	}
-	_, ok = utils.DiskUsageCache.Get(cacheKey)
-	if !ok {
-		// Only fetch disk total if not cached (this is expensive, so we cache it)
-		totalBytes, err := fileutils.GetPartitionSize(sourcePath)
-		if err != nil {
-			idx.mu.Lock()
-			idx.Status = UNAVAILABLE
-			idx.mu.Unlock()
-			return ReducedIndex{}, fmt.Errorf("error getting disk usage for %s: %v", sourcePath, err)
-		}
-
-		idx.SetUsage(totalBytes)
-		utils.DiskUsageCache.Set(cacheKey, true)
-	}
-
 	// Build scanner info for client
 	idx.mu.RLock()
 	scannerInfos := make([]*ScannerInfo, 0, len(idx.scanners))
@@ -227,6 +204,37 @@ func GetIndexInfo(sourceName string, forceCacheRefresh bool) (ReducedIndex, erro
 		})
 	}
 	idx.mu.RUnlock()
+
+	// Only update disk total if cache is missing or explicitly forced
+	// The "used" value comes from totalSize and is always current
+	sourcePath := idx.Path
+	cacheKey := "usageCache-" + sourceName
+	if forceCacheRefresh {
+		// Invalidate cache to force update
+		utils.DiskUsageCache.Delete(cacheKey)
+	}
+	_, ok = utils.DiskUsageCache.Get(cacheKey)
+	if !ok {
+		// Only fetch disk total if not cached (this is expensive, so we cache it)
+		// For S3, we might want to return 0 or a large number if we can't get bucket size easily.
+		totalBytes := uint64(0)
+		if idx.Source.Type != "s3" {
+			var err error
+			totalBytes, err = fileutils.GetPartitionSize(sourcePath)
+			if err != nil {
+				idx.mu.Lock()
+				idx.Status = UNAVAILABLE
+				idx.mu.Unlock()
+				return ReducedIndex{}, fmt.Errorf("error getting disk usage for %s: %v", sourcePath, err)
+			}
+		} else {
+			// For S3, maybe we can get this from somewhere or just return a default
+			totalBytes = 100 * 1024 * 1024 * 1024 // 100GB dummy
+		}
+
+		idx.SetUsage(totalBytes)
+		utils.DiskUsageCache.Set(cacheKey, true)
+	}
 
 	// Get fresh values from the index (with lock to ensure consistency)
 	idx.mu.RLock()
